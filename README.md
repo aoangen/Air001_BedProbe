@@ -1,5 +1,7 @@
 # [Air001_BedProbe](https://github.com/aoangen/Air001_BedProbe)
 
+[获取硬件资料](https://oshwhub.com/aoang/air001_bedprobe)
+
 3D打印机压力热床，主控MCU使用合宙Air001，可以使用HX71708、CS1237两种AD转换芯片
 电路简单，可以很容易嵌入各种其它主板或3D打印机项目电路中
 
@@ -17,7 +19,7 @@
 
 
 
-测试条件：CS1237 1280Hz，5mm/s速度，皮带Z 80：20减速比，触发重量150g
+测试条件：CS1237 1280Hz，5mm/s速度，皮带Z 80:16减速比，触发重量150g
 连续10次重复精度测试结果：
 
 | Range  | Deviation |
