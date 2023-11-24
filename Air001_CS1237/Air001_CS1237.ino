@@ -233,14 +233,19 @@ void handleSerialCommand(String command) {
     serialOutput = !serialOutput;
     Serial.println("串口输出已" + String(serialOutput ? "开启" : "关闭"));
   }else if (command.startsWith("SET SPEED ")) {
-    uint8_t newIndex = command.substring(16).toInt();
+    String speedStr = command.substring(10);
+    uint8_t newIndex = speedStr.toInt();
+    Serial.print("数据速率索引修改为：");
+    Serial.println(newIndex);
+
     if (newIndex < SPEED_SETTING_COUNT) {
         EEPROM.put(SPEED_SETTING_ADDRESS, newIndex);
         Serial.println("数据速率索引已保存。请重启以应用新设置。");
     } else {
         Serial.println("无效的数据速率索引。");
     }
-  }else if (command == "HELP") {
+}
+else if (command == "HELP") {
     Serial.println("ADC <factor> - 设置校准因数,值为整数");
     Serial.println("SET SPEED <index> - 设置数据速率,输入索引值，0=10,1=40,2=640,3=1280，重启生效");
     Serial.println("RST - 重置偏移");
