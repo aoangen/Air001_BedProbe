@@ -23,9 +23,10 @@ const uint8_t SPEED_SETTINGS[] = { SPEED_10, SPEED_40, SPEED_640, SPEED_1280 };
 const uint8_t SPEED_SETTING_COUNT = sizeof(SPEED_SETTINGS) / sizeof(SPEED_SETTINGS[0]);
 
 
-const unsigned long MUTATION_DURATION = 300000;   // LED点亮的最短时间长度，单位微秒
-const unsigned long MAX_TRIGGER_TIME = 10000000;  // 触发最长时间，单位微秒
-const unsigned long UPDATE_INTERVAL = 10000000;   // 参考值更新时间，单位微秒
+const unsigned long MUTATION_DURATION = 300000;    // LED点亮的最短时间长度，单位微秒
+const unsigned long MAX_TRIGGER_TIME = 10000000;   // 触发最长时间，单位微秒
+const unsigned long UPDATE_INTERVAL = 10000000;    // 参考值更新时间，单位微秒
+const unsigned long SERIAL_OUTPUT_INTERVAL = 200;  // 串口输出时间间隔，单位毫秒
 
 const int THRESHOLD_ADDRESS = 0;           // EEPROM
 const int CALIBRATION_FACTOR_ADDRESS = 4;  // 校准因数在 EEPROM 中的地址
@@ -45,15 +46,16 @@ bool ledFlag = false;
 bool serialOutput = false;
 unsigned long mutationStartTime = 0;
 unsigned long lastUpdateTime = 0;
-unsigned long mutationCount = 0;  // 触发计数
+unsigned long mutationCount = 0;         // 触发计数
+unsigned long lastSerialOutputTime = 0;  // 串口输出时间记录
 
 bool recordMinMax = false;  // 记录最大最小值的标志
 int maxWeight = INT_MIN;    // 最大重量
 int minWeight = INT_MAX;    // 最小重量
 
-float emaWeight = 0.0;      // 滤波后的重量
-const float alpha = 0.1;    // EMA滤波系数
-bool emaFilterEnabled;      // EMA滤波器开关
+int emaWeight = 0;    // 滤波后的重量
+const float alpha = 0.1;  // EMA滤波系数
+bool emaFilterEnabled;    // EMA滤波器开关
 
 
 
@@ -132,7 +134,7 @@ void setup() {
 
   int thresholdIndex = EEPROM.read(THRESHOLD_ADDRESS);
   if (thresholdIndex < 0 || thresholdIndex >= THRESHOLD_COUNT) {
-    thresholdIndex = 1;// 如果索引无效，则使用默认值
+    thresholdIndex = 1;  // 如果索引无效，则使用默认值
   }
   threshold = THRESHOLDS[thresholdIndex];
   Serial.print("触发阈值: ");
@@ -154,7 +156,7 @@ void setup() {
   if (emaState == 0 || emaState == 1) {
     emaFilterEnabled = (emaState == 1);
   } else {
-    emaFilterEnabled = true; // 如果读取的值不是0或1，默认为启用
+    emaFilterEnabled = true;  // 如果读取的值不是0或1，默认为启用
   }
   Serial.print("EMA滤波器: ");
   Serial.println(emaFilterEnabled ? "启用" : "禁用");
@@ -328,13 +330,12 @@ void handleSerialCommand(String command) {
     uint8_t emaState = emaFilterEnabled ? 1 : 0;
     EEPROM.put(EMA_FILTER_ADDRESS, emaState);
     Serial.println(emaFilterEnabled ? "EMA滤波器已启用" : "EMA滤波器已禁用");
-  }
-  else if (command == "HELP") {
+  } else if (command == "HELP") {
     Serial.println("===========HELP===========");
     Serial.println("ADC <factor> - 设置校准因数,值为整数");
     Serial.println("SET SPEED <index> - 设置数据速率,输入索引值，0=10,1=40,2=640,3=1280，重启生效");
     Serial.println("RST - 重置偏移");
-    Serial.println("SERIAL - 开启/关闭串口调试输出");
+    Serial.println("SERIAL - 开启/关闭实时重量值输出");
     Serial.println("RECORD - 开启/关闭记录读数跳变");
     Serial.println("EMA - 开启/关闭EMA滤波器");
     Serial.println("HELP - 显示帮助信息");
@@ -355,18 +356,18 @@ void loop() {
   checkPressureChange();   //读取传感器并检查是否触发
   updateReferenceValue();  //更新参考重量
 
-  handleWeightRecording();
+  handleWeightRecording();  //记录最大最小值
 
-  // 串口输出调试信息
-  if (serialOutput) {
-    Serial.print("重量: ");
-    Serial.print(emaWeight);
-    Serial.print("g | 参考值: ");
-    Serial.print(referenceValue);
-    Serial.print(" | 触发次数: ");
-    Serial.print(mutationCount);
-    Serial.print(" | 阈值: ");
-    Serial.println(threshold);
+  unsigned long currentTime = millis();
+  if (currentTime - lastSerialOutputTime >= SERIAL_OUTPUT_INTERVAL) {
+    if (serialOutput) {
+      Serial.print(currentWeight);
+      Serial.print(",");
+      Serial.print(emaWeight);
+      Serial.print(",");
+      Serial.println(threshold);
+    }
+    lastSerialOutputTime = currentTime;  // 更新上次输出时间
   }
 
   // 串口命令
