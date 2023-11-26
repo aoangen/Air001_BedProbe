@@ -26,7 +26,7 @@ const uint8_t SPEED_SETTING_COUNT = sizeof(SPEED_SETTINGS) / sizeof(SPEED_SETTIN
 const unsigned long MUTATION_DURATION = 300000;    // LED点亮的最短时间长度，单位微秒
 const unsigned long MAX_TRIGGER_TIME = 10000000;   // 触发最长时间，单位微秒
 const unsigned long UPDATE_INTERVAL = 10000000;    // 参考值更新时间，单位微秒
-const unsigned long SERIAL_OUTPUT_INTERVAL = 200;  // 串口输出时间间隔，单位毫秒
+const unsigned long SERIAL_OUTPUT_INTERVAL = 100;  // 串口输出时间间隔，单位毫秒
 
 const int THRESHOLD_ADDRESS = 0;           // EEPROM
 const int CALIBRATION_FACTOR_ADDRESS = 4;  // 校准因数在 EEPROM 中的地址
@@ -221,9 +221,9 @@ void checkPressureChange() {
       if (!serialOutput) {
         Serial.print("触发次数: ");
         Serial.print(mutationCount);
-        Serial.print(", 参考重量: ");
+        Serial.print(", 触发阈值: ");
         Serial.print(referenceValue);
-        Serial.print("g, 当前阈值: ");
+        Serial.print("g + ");
         Serial.print(threshold);
         Serial.println("g");
       }
@@ -303,18 +303,12 @@ void handleSerialCommand(String command) {
     Serial.println("串口输出已" + String(serialOutput ? "开启" : "关闭"));
   } else if (command.startsWith("SET SPEED ")) {
     String speedStr = command.substring(10);
-    Serial.print("提取的速度字符串：");
-    Serial.println(speedStr);  // 打印提取的字符串
-
     uint8_t newIndex = speedStr.toInt();
-    Serial.print("解析后的数据速率索引是：");
-    Serial.println(newIndex);  // 打印解析后的索引
-
     if (newIndex < SPEED_SETTING_COUNT) {
       EEPROM.put(SPEED_SETTING_ADDRESS, newIndex);
-      Serial.println("数据速率索引已保存。请重启以应用新设置。");
-      Serial.print("保存的数据速率索引是：");
-      Serial.println(newIndex);  // 打印保存的数据速率索引
+      Serial.print("数据速率已修改为：");
+      Serial.print(newIndex);
+      Serial.println(" ,请重启以应用新设置。");
     } else {
       Serial.println("无效的数据速率索引。");
     }
@@ -365,7 +359,8 @@ void loop() {
       Serial.print(",");
       Serial.print(emaWeight);
       Serial.print(",");
-      Serial.println(threshold);
+      int sum = threshold + referenceValue;
+      Serial.println(sum);
     }
     lastSerialOutputTime = currentTime;  // 更新上次输出时间
   }
