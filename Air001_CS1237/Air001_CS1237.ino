@@ -1,18 +1,42 @@
-// Air001_BedProbe_CS1237 3D打印压力传感器热床调平程序V1.1
-// 新增串口命令调试功能，可通过串口输入命令进行校准、重置偏移、切换阈值等操作
-// 下载时将Air001主频设置为48MHz
+// Air001_BedProbe_CS1237 3D打印压力传感器热床调平程序V1.2
+// 可以使用的MCU  PY32F002AF15P(普冉) Air001(合宙)  本质是同一款，Arduino开发环境由合宙提供
+// 新增串口命令调试功能，可通过串口输入命令进行校准、重置偏移、查看输出等操作
+// 新增5档LED进度条显示功能，触发进度转换成百分比，从30-100%控制LED点亮
+
+// 功能说明
+// 实时读取CS1237 ADC芯片的压力传感器数据，并转换成重量值，速率在10、40、640、1280Hz可调
+// 动态阈值，设定阈值+静态压力值=最终触发所需重量，10秒内如果没有压力突变，更新一次阈值
+// 检测压力值突变，使用EMA滤波器，压力值大于阈值即触发
+
+// 使用说明
+// 参考 https://wiki.luatos.com/chips/air001/index.html 配置开发环境和烧录方法
+// 编译时在 <工具> 菜单中将 <Clock Source and Frequency> 设置为 <HSI 24Mhz, HCLK 24Mhz>
+// 代码烧录成功后，使用串口监视器，波特率设置为115200，输入 <HELP> 获取控制命令
+// 不同的传感器读取到的数据不一样，所以为了获取准确的重量需要进行校准
+// 先将数据速率设置为10Hz(低速读取较为精准)，复位重启后生效，再启用实时重量输出，这样就可以在串口监视器查看实时数据了
+// 三个数据分别是 重量、滤波后的重量、阈值，打开数据输出时使用串口绘图仪可以可视化显示压力值
+// 找一个已知重量的物品(以50g砝码为例)，如果传感器得到的重量不是50g，那么就使用校准命令<ADC 209>进行修改校准值，在默认的209上增加或减少，直到实时重量和所称物品的实际重量接近
+// 最后将数据速率调整回1280Hz
+
 #include "CS1237.h"
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <climits>
 
 // 定义引脚
-#define SCK_PIN PB_0   // CS1237_CSK
-#define DOUT_PIN PA_4  // CS1237_DOUT
-#define PROBE_OUT1 PB_1
-#define PROBE_OUT0 PB_3
-#define PULSE_PIN PA_5   // 输出实时速度速率
+#define SCK_PIN PB_0   // CS1237_CSK  数据传输时钟引脚
+#define DOUT_PIN PA_4  // CS1237_DOUT 数据输出引脚
+#define PROBE_OUT1 PB_1 //  触发引脚，触发时高电平
+#define PROBE_OUT0 PB_3 //  触发引脚，触发时低电平
+#define PULSE_PIN PA_5   // 输出实时速度速率，使用示波器检测实时运行速率
 #define BUTTON_PIN PB_6  // BOOT按键，运行中复用阈值切换功能
+
+// 定义进度显示LED引脚
+#define LED1_PIN PA_13  // LED 1  30%
+#define LED2_PIN PA_14  // LED 2  47%
+#define LED3_PIN PB_2   // LED 3  64%
+#define LED4_PIN PA_6   // LED 4  81%
+#define LED5_PIN PA_7   // LED 5  100%
 
 
 // 定义常量
@@ -53,9 +77,10 @@ bool recordMinMax = false;  // 记录最大最小值的标志
 int maxWeight = INT_MIN;    // 最大重量
 int minWeight = INT_MAX;    // 最小重量
 
-int emaWeight = 0;    // 滤波后的重量
+int emaWeight = 0;        // 滤波后的重量
 const float alpha = 0.1;  // EMA滤波系数
 bool emaFilterEnabled;    // EMA滤波器开关
+int progress;             //触发进度百分比
 
 
 
@@ -72,6 +97,20 @@ void setup() {
   recordMinMax = false;
   maxWeight = INT_MIN;
   minWeight = INT_MAX;
+
+  // 设置LED引脚为输出模式
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(LED3_PIN, OUTPUT);
+  pinMode(LED4_PIN, OUTPUT);
+  pinMode(LED5_PIN, OUTPUT);
+  
+  // 确保所有LED最开始是关闭状态
+  digitalWrite(LED1_PIN, LOW);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(LED3_PIN, LOW);
+  digitalWrite(LED4_PIN, LOW);
+  digitalWrite(LED5_PIN, LOW);
 
   pinMode(PROBE_OUT1, OUTPUT);
   digitalWrite(PROBE_OUT1, LOW);
@@ -211,41 +250,54 @@ void updateReferenceValue() {
 }
 
 // 测量当前的重量，并与参考重量值比较，如果变化超过阈值，就触发LED灯并更新相关变量。
-void checkPressureChange() {
-  int weight = emaWeight;
-  int change = weight - referenceValue;
-
-  if (change > threshold) {
-    if (!ledFlag) {
-      mutationCount++;
-      if (!serialOutput) {
-        Serial.print("触发次数: ");
-        Serial.print(mutationCount);
-        Serial.print(", 触发阈值: ");
-        Serial.print(referenceValue);
-        Serial.print("g + ");
-        Serial.print(threshold);
-        Serial.println("g");
-      }
-      ledFlag = true;
-      mutationStartTime = micros();
-      lastUpdateTime = micros();
-    } else if ((micros() - mutationStartTime) >= MAX_TRIGGER_TIME) {
-      // 如果触发时间超过上限，就更新参考重量并退出触发状态
-      referenceValue = weight;
-      ledFlag = false;
-      digitalWrite(PROBE_OUT1, LOW);
-      digitalWrite(PROBE_OUT0, HIGH);
-    } else {
-      digitalWrite(PROBE_OUT1, HIGH);
-      digitalWrite(PROBE_OUT0, LOW);
-    }
-  } else if (ledFlag && (micros() - mutationStartTime) >= MUTATION_DURATION) {
-    digitalWrite(PROBE_OUT1, LOW);
-    digitalWrite(PROBE_OUT0, HIGH);
-    ledFlag = false;
+void checkPressureChange() { 
+  int weight = emaWeight; 
+  int change = weight - referenceValue; 
+  int sum = threshold + referenceValue;  // 计算动态触发阈值
+  
+  // 计算进度百分比
+  progress = 0;
+  if (weight >= sum) {
+    progress = 100;  // 达到或超过阈值，进度100%
+  } else {
+    progress = ((float)(weight - referenceValue) / threshold) * 100;  // 计算百分比
   }
+
+  //控制进度显示LED
+  checkLEDStatus();
+
+  
+  if (change > threshold) { 
+    if (!ledFlag) { 
+      mutationCount++; 
+      if (!serialOutput) { 
+        Serial.print("触发次数: "); 
+        Serial.print(mutationCount); 
+        Serial.print(", 触发阈值: "); 
+        Serial.print(referenceValue); 
+        Serial.print("g + "); 
+        Serial.print(threshold); 
+        Serial.println("g"); 
+      } 
+      ledFlag = true; 
+      mutationStartTime = micros(); 
+      lastUpdateTime = micros(); 
+    } else if ((micros() - mutationStartTime) >= MAX_TRIGGER_TIME) { 
+      referenceValue = weight; 
+      ledFlag = false; 
+      digitalWrite(PROBE_OUT1, LOW); 
+      digitalWrite(PROBE_OUT0, HIGH); 
+    } else { 
+      digitalWrite(PROBE_OUT1, HIGH); 
+      digitalWrite(PROBE_OUT0, LOW); 
+    } 
+  } else if (ledFlag && (micros() - mutationStartTime) >= MUTATION_DURATION) { 
+    digitalWrite(PROBE_OUT1, LOW); 
+    digitalWrite(PROBE_OUT0, HIGH); 
+    ledFlag = false; 
+  } 
 }
+
 
 // 如果按键被按下，就切换阈值，并更新EEPROM中存储的阈值索引。
 void switchThreshold() {
@@ -280,6 +332,40 @@ void switchThreshold() {
 
     // LED闪烁提示成功切换
     blinkLED(thresholdIndex + 1);
+  }
+}
+
+// 控制LED的点亮情况
+void checkLEDStatus() {
+  // 根据progress控制每个LED的点亮情况
+  if (progress > 30) {
+    digitalWrite(LED1_PIN, HIGH);  // 亮第一个LED
+  } else {
+    digitalWrite(LED1_PIN, LOW);   // 否则熄灭
+  }
+
+  if (progress > 47) {
+    digitalWrite(LED2_PIN, HIGH);  // 亮第二个LED
+  } else {
+    digitalWrite(LED2_PIN, LOW);   // 否则熄灭
+  }
+
+  if (progress > 64) {
+    digitalWrite(LED3_PIN, HIGH);  // 亮第三个LED
+  } else {
+    digitalWrite(LED3_PIN, LOW);   // 否则熄灭
+  }
+
+  if (progress > 81) {
+    digitalWrite(LED4_PIN, HIGH);  // 亮第四个LED
+  } else {
+    digitalWrite(LED4_PIN, LOW);   // 否则熄灭
+  }
+
+  if (progress >= 100) {
+    digitalWrite(LED5_PIN, HIGH);  // 亮第五个LED
+  } else {
+    digitalWrite(LED5_PIN, LOW);   // 否则熄灭
   }
 }
 
@@ -361,6 +447,10 @@ void loop() {
       Serial.print(",");
       int sum = threshold + referenceValue;
       Serial.println(sum);
+        // 输出进度百分比到串口
+      // Serial.print("当前进度: ");
+      // Serial.print(progress);
+      // Serial.println("%");
     }
     lastSerialOutputTime = currentTime;  // 更新上次输出时间
   }
