@@ -18,6 +18,9 @@
 // 找一个已知重量的物品(以50g砝码为例)，如果传感器得到的重量不是50g，那么就使用校准命令<ADC 209>进行修改校准值，在默认的209上增加或减少，直到实时重量和所称物品的实际重量接近
 // 最后将数据速率调整回1280Hz
 
+// 添加到<文件> <首选项> <其它开发板管理器地址>
+// 合宙开发板地址 https://arduino.luatos.com/package_air_cn_index.json
+
 #include "CS1237.h"
 #include <Arduino.h>
 #include <EEPROM.h>
@@ -34,9 +37,12 @@
 // 定义进度显示LED引脚
 #define LED1_PIN PA_13  // LED 1  30%
 #define LED2_PIN PA_14  // LED 2  47%
-#define LED3_PIN PB_2   // LED 3  64%
-#define LED4_PIN PA_6   // LED 4  81%
-#define LED5_PIN PA_7   // LED 5  100%
+#define LED3_PIN PA_6   // LED 3  64%
+#define LED4_PIN PA_7   // LED 4  81%
+#define LED5_PIN PB_2   // LED 5  100%
+
+// 呼吸灯输出引脚
+#define LED_PWM PA_0
 
 
 // 定义常量
@@ -78,9 +84,16 @@ int maxWeight = INT_MIN;    // 最大重量
 int minWeight = INT_MAX;    // 最小重量
 
 int emaWeight = 0;        // 滤波后的重量
-const float alpha = 0.1;  // EMA滤波系数
+const float alpha = 0.2;  // EMA滤波系数
 bool emaFilterEnabled;    // EMA滤波器开关
 int progress;             //触发进度百分比
+
+int brightness = 0;         // Initial brightness (PWM value)
+int fadeAmount = 5;         // Amount to increase/decrease brightness
+unsigned long lastBreathTime = 0;  // Time tracker for breathing effect
+const int breathDelay = 80;  // Delay time for smooth breathing effect (adjust for speed)
+
+
 
 
 
@@ -106,21 +119,27 @@ void setup() {
   pinMode(LED5_PIN, OUTPUT);
   
   // 确保所有LED最开始是关闭状态
-  digitalWrite(LED1_PIN, LOW);
-  digitalWrite(LED2_PIN, LOW);
-  digitalWrite(LED3_PIN, LOW);
-  digitalWrite(LED4_PIN, LOW);
-  digitalWrite(LED5_PIN, LOW);
+  digitalWrite(LED1_PIN, HIGH);
+  digitalWrite(LED2_PIN, HIGH);
+  digitalWrite(LED3_PIN, HIGH);
+  digitalWrite(LED4_PIN, HIGH);
+  digitalWrite(LED5_PIN, HIGH);
 
+  // 设置LED_PWM引脚为输出模式
+  pinMode(LED_PWM, OUTPUT);
+
+  // 输出触发引脚
   pinMode(PROBE_OUT1, OUTPUT);
   digitalWrite(PROBE_OUT1, LOW);
 
   pinMode(PROBE_OUT0, OUTPUT);
   digitalWrite(PROBE_OUT0, HIGH);
 
+  //运行频率输出引脚
   pinMode(PULSE_PIN, OUTPUT);
   digitalWrite(PULSE_PIN, LOW);
 
+  // boot0复用按键功能引脚
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   CS1237_init(SCK_PIN, DOUT_PIN);
@@ -339,35 +358,55 @@ void switchThreshold() {
 void checkLEDStatus() {
   // 根据progress控制每个LED的点亮情况
   if (progress > 30) {
-    digitalWrite(LED1_PIN, HIGH);  // 亮第一个LED
+    digitalWrite(LED1_PIN, LOW);  // 亮第一个LED
   } else {
-    digitalWrite(LED1_PIN, LOW);   // 否则熄灭
+    digitalWrite(LED1_PIN, HIGH);   // 否则熄灭
   }
 
   if (progress > 47) {
-    digitalWrite(LED2_PIN, HIGH);  // 亮第二个LED
+    digitalWrite(LED2_PIN, LOW);  // 亮第二个LED
   } else {
-    digitalWrite(LED2_PIN, LOW);   // 否则熄灭
+    digitalWrite(LED2_PIN, HIGH);   // 否则熄灭
   }
 
   if (progress > 64) {
-    digitalWrite(LED3_PIN, HIGH);  // 亮第三个LED
+    digitalWrite(LED3_PIN, LOW);  // 亮第三个LED
   } else {
-    digitalWrite(LED3_PIN, LOW);   // 否则熄灭
+    digitalWrite(LED3_PIN, HIGH);   // 否则熄灭
   }
 
   if (progress > 81) {
-    digitalWrite(LED4_PIN, HIGH);  // 亮第四个LED
+    digitalWrite(LED4_PIN, LOW);  // 亮第四个LED
   } else {
-    digitalWrite(LED4_PIN, LOW);   // 否则熄灭
+    digitalWrite(LED4_PIN, HIGH);   // 否则熄灭
   }
 
   if (progress >= 100) {
-    digitalWrite(LED5_PIN, HIGH);  // 亮第五个LED
+    digitalWrite(LED5_PIN, LOW);  // 亮第五个LED
   } else {
-    digitalWrite(LED5_PIN, LOW);   // 否则熄灭
+    digitalWrite(LED5_PIN, HIGH);   // 否则熄灭
   }
 }
+
+void breathingLED() {
+  if (millis() - lastBreathTime >= breathDelay) {
+    // Update brightness for breathing effect
+    brightness += fadeAmount;
+
+    // Reverse the direction of the fade at the boundaries
+    if (brightness <= 0 || brightness >= 255) {
+      fadeAmount = -fadeAmount;
+    }
+
+    // Adjust the PWM duty cycle to control the LED brightness
+    analogWrite(LED_PWM, brightness);
+
+    // Update the last breath time
+    lastBreathTime = millis();
+  }
+}
+
+
 
 // 处理串口命令
 void handleSerialCommand(String command) {
@@ -431,6 +470,9 @@ void loop() {
 
   // 应用EMA滤波
   emaWeight = emaFilterEnabled ? (alpha * currentWeight + (1 - alpha) * emaWeight) : currentWeight;
+
+
+  breathingLED();
 
   switchThreshold();       //按键切换阈值
   checkPressureChange();   //读取传感器并检查是否触发
