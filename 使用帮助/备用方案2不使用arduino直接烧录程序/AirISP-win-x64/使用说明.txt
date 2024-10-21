@@ -1,0 +1,12 @@
+烧录工具说明文档
+https://arduino.luatos.com/airisp/
+
+在这个文件夹中右键使用终端打开
+输入命令
+.\AirISP.exe -c air001 -p COM4 -b 115200 write_flash -e 0x08000000 001.hex
+注意串口号改成烧录工具实际的串口号，并让压力板进入烧录模式(按住boot按键再上电或者复位)
+执行命令
+
+烧录成功后可以使用任意串口调试工具进行配置
+推荐使用在线串口工具
+https://serial.huhn.me/
